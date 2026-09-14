@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Transformações Geométricas 2D - Canvas</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #f2f2f2;
+    margin: 20px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.alunos { margin-top: 0; color: #555; }
+  canvas {
+    border: 2px solid #333;
+    background: #87ceeb;
+    display: block;
+  }
+  .caixa {
+    background: #fff;
+    border: 1px solid #ccc;
+    padding: 12px 16px;
+    margin-top: 14px;
+    max-width: 800px;
+  }
+  .caixa h2 { font-size: 15px; margin: 0 0 6px 0; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 3px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<h1>Transformações Geométricas 2D</h1>
+<p class="alunos">Computação Gráfica - Alunos: ____________________ e ____________________</p>
+
+<canvas id="tela" width="800" height="420"></canvas>
+
+<div class="caixa">
+  <h2>Controles</h2>
+  <ul>
+    <li><b>Seta direita / esquerda</b> - aumenta e diminui a velocidade dos carros</li>
+    <li><b>Seta cima / baixo</b> - gira o braço do guindaste</li>
+    <li><b>A / S</b> - gira o antebraço do guindaste</li>
+    <li><b>Espaço</b> - pausa a animação</li>
+    <li><b>Clique no desenho</b> - inverte o sentido do trânsito (usa reflexão)</li>
+  </ul>
+</div>
+
+<div class="caixa">
+  <h2>Onde cada transformação foi usada</h2>
+  <ul>
+    <li><b>Translação</b> - movimento dos carros na rua</li>
+    <li><b>Rotação</b> - rodas dos carros e pás do catavento</li>
+    <li><b>Escala</b> - tamanho dos carros e o sol que pulsa</li>
+    <li><b>Composição</b> - o carro usa translação + escala + rotação das rodas juntas</li>
+    <li><b>Ponto fixo (T - Op - T)</b> - pás do catavento, raios e disco do sol</li>
+    <li><b>Animação</b> - requestAnimationFrame com setTransform resetando a matriz</li>
+    <li><b>save/restore</b> - cada objeto é desenhado dentro de um save/restore</li>
+    <li><b>Bônus</b> - teclado e mouse, reflexão nos carros, cisalhamento nas sombras e hierarquia no guindaste</li>
+  </ul>
+</div>
+
+<script>
+// ===================================================
+// Trabalho de Computação Gráfica
+// Transformações geométricas 2D usando Canvas
+// ===================================================
+
+var canvas = document.getElementById("tela");
+var ctx = canvas.getContext("2d");
+
+// ---------- variáveis que mudam durante a animação ----------
+var anguloRoda = 0;      // giro das rodas
+var anguloPas = 0;       // giro das pás do catavento
+var anguloSol = 0;       // giro dos raios do sol
+var escalaSol = 1;       // sol aumenta e diminui
+var tempo = 0;
+
+var carroX1 = 100;       // posição do primeiro carro
+var carroX2 = 600;       // posição do segundo carro
+var velocidade = 120;    // pixels por segundo
+var direcao = 1;         // 1 = normal, -1 = invertido (clique do mouse)
+
+var anguloBraco1 = -0.6; // primeira junta do guindaste
+var anguloBraco2 = 0.9;  // segunda junta do guindaste
+
+var pausado = false;
+var dt = 1 / 60;         // tempo de cada quadro
+
+
+// ===================================================
+// CENÁRIO (chão e rua) - sem transformação, só retângulos
+// ===================================================
+function desenharCenario() {
+  ctx.fillStyle = "#6ab04c";          // grama
+  ctx.fillRect(0, 300, 800, 120);
+
+  ctx.fillStyle = "#3d3d3d";          // asfalto
+  ctx.fillRect(0, 330, 800, 70);
+
+  ctx.fillStyle = "#f4d03f";          // faixa do meio
+  for (var x = 0; x < 800; x = x + 60) {
+    ctx.fillRect(x, 362, 30, 5);
+  }
+}
+
+
+// ===================================================
+// SOL - ROTAÇÃO E ESCALA COM PONTO FIXO (T -> Op -> T)
+// ===================================================
+function desenharSol() {
+  var sx = 700;   // ponto fixo do sol
+  var sy = 70;
+
+  // --- raios giram em volta do centro do sol ---
+  ctx.strokeStyle = "#f9ca24";
+  ctx.lineWidth = 5;
+  for (var i = 0; i < 8; i++) {
+    ctx.save();
+    ctx.translate(sx, sy);                      // 1) leva o ponto fixo pra origem
+    ctx.rotate(anguloSol + i * Math.PI / 4);    // 2) gira
+    ctx.translate(-sx, -sy);                    // 3) volta o ponto fixo pro lugar
+    ctx.beginPath();
+    ctx.moveTo(sx + 32, sy);
+    ctx.lineTo(sx + 46, sy);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- disco do sol aumenta e diminui, também com ponto fixo ---
+  ctx.save();
+  ctx.translate(sx, sy);                // 1) ponto fixo pra origem
+  ctx.scale(escalaSol, escalaSol);      // 2) escala
+  ctx.translate(-sx, -sy);              // 3) volta
+  ctx.fillStyle = "#ffd32a";
+  ctx.beginPath();
+  ctx.arc(sx, sy, 28, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+
+// ===================================================
+// PRÉDIO + SOMBRA COM CISALHAMENTO (bônus)
+// ===================================================
+function desenharPredio(x, largura, altura) {
+
+  // --- sombra: cisalhamento + achatamento ---
+  ctx.save();
+  ctx.translate(x, 300);                  // origem na base do prédio
+  ctx.transform(1, 0, -0.7, 1, 0, 0);     // CISALHAMENTO no eixo x
+  ctx.scale(1, -0.18);                    // vira e achata (fica deitada no chão)
+  ctx.fillStyle = "rgba(0, 0, 0, 0.25)";
+  ctx.fillRect(0, -altura, largura, altura);
+  ctx.restore();
+
+  // --- prédio ---
+  ctx.save();
+  ctx.translate(x, 300);                  // origem na base do prédio
+  ctx.fillStyle = "#576574";
+  ctx.fillRect(0, -altura, largura, altura);
+
+  ctx.fillStyle = "#ffeaa7";              // janelas
+  for (var j = 14; j < altura - 14; j = j + 30) {
+    for (var i = 8; i < largura - 14; i = i + 22) {
+      ctx.fillRect(i, -altura + j, 12, 16);
+    }
+  }
+  ctx.restore();
+}
+
+
+// ===================================================
+// CATAVENTO - ROTAÇÃO COM PONTO FIXO (T -> R -> T)
+// ===================================================
+function desenharCatavento(cx, cy) {
+
+  // poste
+  ctx.strokeStyle = "#95a5a6";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx, 300);
+  ctx.stroke();
+
+  // as 4 pás giram em volta do ponto (cx, cy)
+  for (var i = 0; i < 4; i++) {
+    ctx.save();
+    ctx.translate(cx, cy);                     // 1) ponto fixo pra origem
+    ctx.rotate(anguloPas + i * Math.PI / 2);   // 2) gira
+    ctx.translate(-cx, -cy);                   // 3) volta o ponto fixo
+    ctx.fillStyle = "#ecf0f1";
+    ctx.fillRect(cx, cy - 5, 48, 10);          // pá desenhada a partir do centro
+    ctx.restore();
+  }
+
+  // centro
+  ctx.fillStyle = "#636e72";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+
+// ===================================================
+// RODA - ROTAÇÃO em torno do próprio centro
+// ===================================================
+function desenharRoda(x, y) {
+  ctx.save();
+  ctx.translate(x, y);          // leva a origem pro centro da roda
+  ctx.rotate(anguloRoda);       // gira
+
+  ctx.fillStyle = "#2d3436";
+  ctx.beginPath();
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#ffffff";  // risco branco pra dar pra ver o giro
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -8);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+
+// ===================================================
+// CARRO - COMPOSIÇÃO: translação + reflexão + escala
+// As rodas são desenhadas dentro do carro (hierarquia)
+// ===================================================
+function desenharCarro(x, y, cor, tamanho, espelhado) {
+  ctx.save();
+
+  ctx.translate(x, y);                      // TRANSLAÇÃO
+  if (espelhado) {
+    ctx.scale(-1, 1);                       // REFLEXÃO (bônus)
+  }
+  ctx.scale(tamanho, tamanho);              // ESCALA
+
+  ctx.fillStyle = cor;                      // carroceria
+  ctx.fillRect(-28, -9, 56, 18);
+  ctx.fillRect(-14, -22, 28, 13);
+
+  ctx.fillStyle = "#dff9fb";                // vidro
+  ctx.fillRect(-10, -19, 20, 9);
+
+  ctx.fillStyle = "#ffeaa7";                // farol
+  ctx.fillRect(24, -5, 5, 5);
+
+  desenharRoda(-15, 11);                    // rodas seguem o carro
+  desenharRoda(15, 11);
+
+  ctx.restore();
+}
+
+
+// ===================================================
+// GUINDASTE - HIERARQUIA DE TRANSFORMAÇÕES (bônus)
+// base -> braço -> antebraço -> cabo com a caixa
+// ===================================================
+function desenharGuindaste(x, y) {
+  ctx.save();
+
+  // ----- nível 1: base e torre -----
+  ctx.translate(x, y);
+  ctx.fillStyle = "#7f8c8d";
+  ctx.fillRect(-10, -95, 20, 95);
+  ctx.fillRect(-25, -8, 50, 8);
+
+  // ----- nível 2: braço gira no topo da torre -----
+  ctx.translate(0, -95);
+  ctx.rotate(anguloBraco1);
+  ctx.fillStyle = "#e67e22";
+  ctx.fillRect(0, -7, 95, 14);
+
+  // ----- nível 3: antebraço gira na ponta do braço -----
+  ctx.translate(95, 0);
+  ctx.rotate(anguloBraco2);
+  ctx.fillStyle = "#d35400";
+  ctx.fillRect(0, -6, 60, 12);
+
+  // ----- nível 4: cabo e caixa na ponta do antebraço -----
+  ctx.translate(60, 0);
+  ctx.rotate(-anguloBraco1 - anguloBraco2);   // desfaz os giros pro cabo ficar em pé
+
+  ctx.strokeStyle = "#2d3436";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, 45);
+  ctx.stroke();
+
+  ctx.fillStyle = "#b8763e";
+  ctx.fillRect(-14, 45, 28, 24);
+
+  ctx.restore();
+}
+
+
+// ===================================================
+// TEXTO DE APOIO
+// ===================================================
+function desenharTexto() {
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "13px Arial";
+  ctx.fillText("Velocidade: " + Math.round(velocidade), 10, 20);
+  if (pausado) {
+    ctx.fillText("PAUSADO", 10, 38);
+  }
+}
+
+
+// ===================================================
+// LOOP DA ANIMAÇÃO (requestAnimationFrame)
+// ===================================================
+function animar() {
+
+  // reseta a matriz e limpa a tela a cada quadro
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, 800, 420);
+
+  // ----- atualiza os valores -----
+  if (!pausado) {
+    tempo = tempo + dt;
+
+    carroX1 = carroX1 + velocidade * direcao * dt;
+    carroX2 = carroX2 - velocidade * direcao * dt;
+
+    if (carroX1 > 860) { carroX1 = -60; }
+    if (carroX1 < -60) { carroX1 = 860; }
+    if (carroX2 > 860) { carroX2 = -60; }
+    if (carroX2 < -60) { carroX2 = 860; }
+
+    anguloRoda = anguloRoda + velocidade * dt / 8;
+    anguloPas = anguloPas + 1.5 * dt;
+    anguloSol = anguloSol + 0.5 * dt;
+    escalaSol = 1 + Math.sin(tempo * 2) * 0.08;
+  }
+
+  // ----- desenha a cena (o chão vem primeiro, as sombras caem em cima dele) -----
+  desenharSol();
+  desenharCenario();
+  desenharPredio(60, 70, 130);
+  desenharPredio(150, 65, 180);
+  desenharPredio(620, 80, 150);
+  desenharCatavento(280, 150);
+
+  desenharCarro(carroX1, 348, "#e74c3c", 1.0, direcao < 0);
+  desenharCarro(carroX2, 385, "#3498db", 0.8, direcao > 0);
+
+  desenharGuindaste(420, 300);
+  desenharTexto();
+
+  requestAnimationFrame(animar);
+}
+
+animar();
+
+
+// ===================================================
+// INTERATIVIDADE - TECLADO E MOUSE (bônus)
+// ===================================================
+document.addEventListener("keydown", function (evento) {
+
+  if (evento.key === "ArrowRight") { velocidade = velocidade + 20; }
+  if (evento.key === "ArrowLeft")  { velocidade = velocidade - 20; }
+  if (velocidade < 0) { velocidade = 0; }
+
+  if (evento.key === "ArrowUp")   { anguloBraco1 = anguloBraco1 - 0.1; }
+  if (evento.key === "ArrowDown") { anguloBraco1 = anguloBraco1 + 0.1; }
+
+  if (evento.key === "a" || evento.key === "A") { anguloBraco2 = anguloBraco2 - 0.1; }
+  if (evento.key === "s" || evento.key === "S") { anguloBraco2 = anguloBraco2 + 0.1; }
+
+  if (evento.key === " ") {
+    pausado = !pausado;
+    evento.preventDefault();
+  }
+});
+
+// clicando no desenho o trânsito inverte o sentido (os carros são espelhados)
+canvas.addEventListener("click", function () {
+  direcao = direcao * -1;
+});
+</script>
+
+</body>
+</html>
